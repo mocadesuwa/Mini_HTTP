@@ -1,0 +1,6 @@
+/build/
+/build-debug/
+/.cache/
+/build.log
+
+AGENT_HANDOFF.md
