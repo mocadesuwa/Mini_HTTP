@@ -1,54 +1,38 @@
 #pragma once
 
-#include "mini_http/http_request.h"
+#include "mini_http/connection.h"
+#include "mini_http/acceptor.h"
+#include "mini_http/event_loop.h"
+
 #include <cstdint>
-#include <string>
 #include <string_view>
-#include <cstddef>
+#include <unordered_map>
 
 namespace mini_http {
 
-enum class ReadResult {
-    Complete,
-    WouldBlock,
-    BadRequest,
-    PeerClosed,
-    IoError
-};
-
-struct ConnectionState {
-    std::string request_bytes;
-
-    std::string response_bytes;
-    std::size_t sent_bytes{0};
-};
-
 int create_listen_socket(std::uint16_t port);
-
-
-ReadResult read_request(
-    int client_fd,
-    ConnectionState& connection,
-    HttpRequest& request
-);
-
 
 bool send_all(
     int client_fd,
     std::string_view bytes
 );
 
-enum class WriteResult {
-    Complete,
-    WouldBlock,
-    IoError
-};
-
-WriteResult flush_response(
-    int client_fd,
-    ConnectionState& connection
-);
-
 int run_server(std::uint16_t port);
 
-}
+class Server {
+public:
+    explicit Server(std::uint16_t port);
+    int run();
+
+private:
+    bool handle_event(int fd, std::uint32_t events);
+
+    Acceptor acceptor_;
+    EventLoop event_loop_;
+    std::unordered_map<int, Connection> connections_;
+};
+
+
+
+} // namespace
+

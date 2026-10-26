@@ -13,7 +13,10 @@ add_library(mini_http
             src/server.cpp
             src/http_parser.cpp
             src/http_response.cpp
-            src/http_handler.cpp)
+            src/http_handler.cpp
+            src/event_loop.cpp
+            src/acceptor.cpp
+            src/connection.cpp)
 
 target_include_directories(mini_http
     PUBLIC
