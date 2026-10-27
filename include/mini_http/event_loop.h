@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <sys/epoll.h>
 #include <functional>
+#include <vector>
+#include <mutex>
 
 namespace mini_http {
 
@@ -26,8 +28,21 @@ public:
 
     int loop(const EventHandler& handler);
 
+    bool wakeup();
+
+    using Task = std::function<void()>;
+    bool post(Task task);
+
 private:
     int epoll_fd_{-1};
+    int wakeup_fd_{-1};
+
+    bool consume_wakeup();
+
+    void run_pending_tasks();
+
+    std::mutex pending_mutex_;
+    std::vector<Task> pending_tasks_;
 };
 
 } // namespace

@@ -12,10 +12,12 @@
 #include <unistd.h>
 #include <exception>
 #include <unordered_map>
+#include <utility>
 
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <cstdio>
+
 
 namespace mini_http {
 
@@ -170,7 +172,8 @@ bool Server::handle_event(int fd, std::uint32_t events) {
             std::perror("accept");
             return false;
         }
-        connections_.try_emplace(client_fd, client_fd);
+        connections_.try_emplace(
+            client_fd, client_fd, next_connection_id_++);
 
         if(!event_loop_.add_fd(client_fd, EPOLLIN)) {
             std::perror("epoll_ctl client");
@@ -189,12 +192,27 @@ bool Server::handle_event(int fd, std::uint32_t events) {
     Connection& connection = it->second;
     const int client_fd = connection.fd();
 
-    if(connection.handle_event(event_loop_) == ConnectionAction::Close) {
-        if(!event_loop_.remove_fd(client_fd)) {
-            std::perror("epoll_ctl DEL");
+    // 处理完整请求已提交， 正在等待业务结果
+    if(connection.processing()) {
+        if((events & (EPOLLHUP | EPOLLERR)) != 0) {
+            close_connection(client_fd);
         }
+        return true;
+    }
 
-        connections_.erase(client_fd);
+    HttpRequest request;
+    ConnectionAction action = connection.handle_event(
+        event_loop_, request);
+
+    if(action == ConnectionAction::RequestReady) {
+        const bool submitted = dispatch_request(
+            client_fd, connection.id(), std::move(request));
+
+        action = submitted ? ConnectionAction::Keep : ConnectionAction::Close;
+    }
+
+    if(action == ConnectionAction::Close) {
+        close_connection(client_fd);
     }
 
     return true;
@@ -203,6 +221,57 @@ bool Server::handle_event(int fd, std::uint32_t events) {
 int run_server(std::uint16_t port) {
     Server server(port);
     return server.run();
+}
+
+bool Server::dispatch_request(
+    int client_fd, std::uint64_t id, HttpRequest request) {
+
+    if(!event_loop_.modify_fd(client_fd, 0)) {
+        std::perror("epoll_ctl pause");
+        return false;
+    }
+
+    return thread_pool_.submit(
+        [this, client_fd, id, request = std::move(request)] {
+            std::string bytes;
+            bool succeeded = false;
+
+            try {
+                bytes = handle_request(request).serialize();
+                succeeded = true;
+            } catch(...) {
+                std::cerr << "HTTP handler failed\n";
+            }
+
+            const bool posted = event_loop_.post(
+                [this, client_fd, id, succeeded,
+                bytes = std::move(bytes)]() mutable {
+                    auto it = connections_.find(client_fd);
+
+                    if(it == connections_.end() || it->second.id() != id) {
+                        return;
+                    }
+
+                    if(!succeeded ||
+                        !it->second.start_response(event_loop_, std::move(bytes))) {
+                        close_connection(client_fd);
+                    }
+                }
+            );
+
+            if(!posted) {
+                std::cerr << "post response failed\n";
+            }
+
+        });
+}
+
+void Server::close_connection(int client_fd) {
+    if(!event_loop_.remove_fd(client_fd)) {
+        std::perror("epoll_ctl DEL");
+    }
+
+    connections_.erase(client_fd);
 }
 
 } // namespace

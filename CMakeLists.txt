@@ -9,6 +9,8 @@ set(CMAKE_CXX_EXTENSIONS ON)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+find_package(Threads REQUIRED)
+
 add_library(mini_http
             src/server.cpp
             src/http_parser.cpp
@@ -16,7 +18,10 @@ add_library(mini_http
             src/http_handler.cpp
             src/event_loop.cpp
             src/acceptor.cpp
-            src/connection.cpp)
+            src/connection.cpp
+            src/thread_pool.cpp)
+
+target_link_libraries(mini_http PUBLIC Threads::Threads)
 
 target_include_directories(mini_http
     PUBLIC
@@ -59,3 +64,16 @@ target_compile_options(test_http_response
 
 target_compile_options(test_http_handler
     PRIVATE -Wall -Wextra -Wpedantic)
+
+
+# experiment 相关实现
+
+add_executable(thread_pool_demo experiments/thread_pool.cpp)
+target_link_libraries(thread_pool_demo PRIVATE mini_http)
+
+add_executable(eventfd_demo experiments/eventfd.cpp)
+target_link_libraries(eventfd_demo PRIVATE mini_http)
+
+add_executable(post_demo experiments/post.cpp)
+target_link_libraries(post_demo PRIVATE mini_http)
+

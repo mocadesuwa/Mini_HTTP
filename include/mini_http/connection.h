@@ -4,6 +4,7 @@
 
 #include <string>
 #include <cstddef>
+#include <cstdint>
 
 namespace mini_http {
 
@@ -44,18 +45,22 @@ class EventLoop;
 
 enum class ConnectionAction {
     Keep,
-    Close
+    Close,
+    RequestReady
 };
 
 class Connection {
 public:
-    explicit Connection(int client_fd);
+    explicit Connection(int client_fd, std::uint64_t id);
     ~Connection();
 
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
 
     int fd() const noexcept;
+    std::uint64_t id() const noexcept;
+    bool processing() const noexcept;
+
     ConnectionState& state() noexcept;
 
     ReadResult read_request(HttpRequest& request);
@@ -64,12 +69,15 @@ public:
     bool has_response() const noexcept;
     void set_response(std::string bytes);
 
-    ConnectionAction handle_event(EventLoop& event_loop);
+    ConnectionAction handle_event(EventLoop& event_loop, HttpRequest& request);
 
+    bool start_response(EventLoop& event_loop, std::string bytes);
 
 private:
     int client_fd_{-1};
+    std::uint64_t id_{0};
     ConnectionState state_;
+    bool processing_{false};
 };
 
 } // namespace

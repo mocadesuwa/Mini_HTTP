@@ -104,8 +104,8 @@ WriteResult flush_response(
 }
 
 
-Connection::Connection(int client_fd)
-    : client_fd_(client_fd) {
+Connection::Connection(int client_fd, std::uint64_t id)
+    : client_fd_(client_fd), id_(id) {
 }
 
 Connection::~Connection() {
@@ -116,6 +116,14 @@ Connection::~Connection() {
 
 int Connection::fd() const noexcept {
     return client_fd_;
+}
+
+std::uint64_t Connection::id() const noexcept {
+    return id_;
+}
+
+bool Connection::processing() const noexcept {
+    return processing_;
 }
 
 ConnectionState& Connection::state() noexcept {
@@ -152,7 +160,19 @@ bool watch_writable(EventLoop& event_loop, int client_fd) {
 
 } // inner namespace
 
-ConnectionAction Connection::handle_event(EventLoop& event_loop) {
+bool Connection::start_response(EventLoop& event_loop, std::string bytes) {
+    set_response(std::move(bytes));
+
+    // 业务完成，连接开始准备发送
+    processing_ = false;
+    return watch_writable(event_loop, client_fd_);
+}
+
+ConnectionAction Connection::handle_event(EventLoop& event_loop, HttpRequest& request) {
+    if(processing_) {
+        return ConnectionAction::Keep;
+    }
+
     if(has_response()) {
         const WriteResult write_result =
             flush_response();
@@ -165,20 +185,13 @@ ConnectionAction Connection::handle_event(EventLoop& event_loop) {
             std::cerr << "Failed to send response\n";
         }
     } else {
-        HttpRequest request;
 
         const ReadResult result = read_request(request);
 
         switch(result) {
             case ReadResult::Complete: {
-                const HttpResponse response = handle_request(request);
-
-                set_response(response.serialize());
-
-                if(watch_writable(event_loop, client_fd_)) {
-                    return ConnectionAction::Keep;
-                }
-                break;
+                processing_ = true;
+                return ConnectionAction::RequestReady;
             }
 
             case ReadResult::WouldBlock:
@@ -192,9 +205,7 @@ ConnectionAction Connection::handle_event(EventLoop& event_loop) {
                 response.status_code = 400;
                 response.body = "Bad request\n";
 
-                set_response(response.serialize());
-
-                if(watch_writable(event_loop, client_fd_)) {
+                if(start_response(event_loop, response.serialize())) {
                     return ConnectionAction::Keep;
                 }
                 break;

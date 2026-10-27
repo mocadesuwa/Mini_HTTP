@@ -43,10 +43,43 @@ server中的功能进行了职责划分，使成为一个完整的单线程React
 
 ### Phase 4：Reactor 与 Thread_pool
 
-- 拆分服务器职责：用 Server、 Event_loop、 Acceptor、 Connection承担相应任务
-- 明确事件分发与 HTTP 处理的边界
-- 明确资源所有权与连接生命周期
-- 确认重构后原有行为正常
+- 拆分服务器职责：用 Server、 Event_loop、 Acceptor、 Connection分别承担服务器协调、就绪事件分发、接受连接和连续读写职责
+- 实现 ThreadPool，使用任务队列、互斥锁和条件变量调度工作线程
+- IO 线程负责客户端 Socket 收发、epoll 事件管理和连接生命周期;
+  worker 负责完整请求的 handle_request 调用以及响应序列化。
+- 使用移动捕获传递请求和响应数据， worker 不直接操作 Connection。
+- 通过 EventLoop::post、线程安全任务队列和 eventfd 唤醒机制。
+  将业务结果交回 IO 线程处理。
+- IO 回调使用 fd 和连接 id 核对结果归属， 再保存响应并关注 EPOLLOUT。
+- 连接关闭后允许在途任务完成，回调发现连接失效时丢弃结果。
+- 使用 RAII 明确文件描述符所有权; 线程池析构时等待工作线程退出。
+
 ## 构建与运行
 
+在 WSL / Ubuntu 的项目根目录执行:
+
+```bash
+cmake -S . -B build
+cmake --build build
+./build/mini_http_server
+```
+
+服务器默认监听 8081 端口。需要另开一个终端进行访问:
+```bash
+curl --noproxy '*' -i http://127.0.0.1:8081/
+```
+
 ## 验证情况
+
+- 基础 HTTP 阶段已经验证 200、400、404、405 响应、
+  Content-Length、正文以及响应后关闭连接
+- 已验证请求分段到达时其他连接仍能正常响应;
+  通过独立发送实验验证部分发送、 WouldBlock 和 EPOLLOUT 续传。
+- post 实验确认业务由 worker 执行，回调由 IO 线程执行。
+- 线程池接入之后进行了正常请求、处理中客户端断开、迟到结果丢弃以及后续请求处理实验。
+
+项目包含 HTTP Parser、Response 和请求处理逻辑三组单元测试:
+
+```bash
+ctest --test-dir build --output-on-failure
+```

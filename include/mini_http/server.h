@@ -3,6 +3,7 @@
 #include "mini_http/connection.h"
 #include "mini_http/acceptor.h"
 #include "mini_http/event_loop.h"
+#include "mini_http/thread_pool.h"
 
 #include <cstdint>
 #include <string_view>
@@ -30,6 +31,16 @@ private:
     Acceptor acceptor_;
     EventLoop event_loop_;
     std::unordered_map<int, Connection> connections_;
+
+    // 编号分配
+    std::uint64_t next_connection_id_{1};
+
+    bool dispatch_request(
+        int client_fd, std::uint64_t id, HttpRequest request);
+
+    void close_connection(int client_fd);
+
+    ThreadPool thread_pool_{2};
 };
 
 
