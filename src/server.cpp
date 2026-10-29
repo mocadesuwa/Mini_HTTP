@@ -237,7 +237,7 @@ bool Server::dispatch_request(
             bool succeeded = false;
 
             try {
-                bytes = handle_request(request).serialize();
+                bytes = handle_request(request, document_root_).serialize();
                 succeeded = true;
             } catch(...) {
                 std::cerr << "HTTP handler failed\n";

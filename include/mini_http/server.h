@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <string_view>
 #include <unordered_map>
+#include <filesystem>
 
 namespace mini_http {
 
@@ -39,6 +40,10 @@ private:
         int client_fd, std::uint64_t id, HttpRequest request);
 
     void close_connection(int client_fd);
+
+    const std::filesystem::path document_root_{
+        std::filesystem::absolute("www")
+    };
 
     ThreadPool thread_pool_{2};
 };

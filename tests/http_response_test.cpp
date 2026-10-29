@@ -49,8 +49,10 @@ void test_status_line() {
     const StatusCase cases[] = {
         {200, "HTTP/1.1 200 OK\r\n"},
         {400, "HTTP/1.1 400 Bad Request\r\n"},
+        {403, "HTTP/1.1 403 Forbidden\r\n"},
         {404, "HTTP/1.1 404 Not Found\r\n"},
-        {405, "HTTP/1.1 405 Method Not Allowed\r\n"}
+        {405, "HTTP/1.1 405 Method Not Allowed\r\n"},
+        {500, "HTTP/1.1 500 Internal Server Error\r\n"}
     };
 
     for(const StatusCase& test : cases) {
@@ -142,7 +144,7 @@ void test_empty_body() {
 
 void test_unsupported_status() {
     HttpResponse response;
-    response.status_code = 500;
+    response.status_code = 501;
 
     bool caught = false;
 

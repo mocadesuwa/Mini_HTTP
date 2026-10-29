@@ -12,10 +12,14 @@ std::string_view reason_phrase(int status_code) {
             return "OK";
         case 400:
             return "Bad Request";
+        case 403:
+            return "Forbidden";
         case 404:
             return "Not Found";
         case 405:
             return "Method Not Allowed";
+        case 500:
+            return "Internal Server Error";
         default:
             throw std::invalid_argument("Unsupported HTTP status code");
     }
