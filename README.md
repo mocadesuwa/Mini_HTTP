@@ -7,7 +7,7 @@
 项目从阻塞 Socket 开始，逐步实现 HTTP 请求解析、响应生成，
 再使用非阻塞读写和 epoll，让一个线程同时管理多个客户端连接。
 
-当前已完成 Phase 1～Phase 4。正式服务器采用单线程、LT 模式的
+当前已完成 Phase 1～Phase 5。正式服务器采用单线程、LT 模式的
 epoll 事件循环，每个连接处理一次请求，发送响应后关闭连接。将
 server中的功能进行了职责划分，使成为一个完整的单线程Reactor。
 
@@ -54,6 +54,22 @@ server中的功能进行了职责划分，使成为一个完整的单线程React
 - 连接关闭后允许在途任务完成，回调发现连接失效时丢弃结果。
 - 使用 RAII 明确文件描述符所有权; 线程池析构时等待工作线程退出。
 
+### Phase 5：静态文件服务
+
+- 以启动工作目录下的 www 为静态文件根目录。
+- GET / 映射到 index.html，支持访问嵌套目录中的文件。
+- 支持 HTML、TXT、CSS、JavaScript 类型；
+  未知类型使用 application/octet-stream。
+- 先分离查询参数，再对路径进行一次百分号解码；
+  规范化路径并检查其是否位于根目录内。
+- 支持空文件和含 NUL 字节的二进制文件，
+  Content-Length 按正文字节数生成。
+- 支持非法路径、越界、文件不存在、权限不足、
+  非 GET 方法和文件系统错误的对应响应。
+- worker 负责文件读取与响应生成，
+  IO 线程负责 Socket 收发，响应发送完毕后关闭连接。
+
+
 ## 构建与运行
 
 在 WSL / Ubuntu 的项目根目录执行:
@@ -77,8 +93,11 @@ curl --noproxy '*' -i http://127.0.0.1:8081/
   通过独立发送实验验证部分发送、 WouldBlock 和 EPOLLOUT 续传。
 - post 实验确认业务由 worker 执行，回调由 IO 线程执行。
 - 线程池接入之后进行了正常请求、处理中客户端断开、迟到结果丢弃以及后续请求处理实验。
+- Phase 5 已验证正常静态文件、错误路径、空文件和二进制传输、
+  Content-Length、读取权限不足及恢复，以及响应后主动关闭连接。
 
-项目包含 HTTP Parser、Response 和请求处理逻辑三组单元测试:
+
+项目包含 `http_parser`、`http_response`、`http_handler`、`path_root`、`path_resolve` 五组自动化测试:
 
 ```bash
 ctest --test-dir build --output-on-failure
