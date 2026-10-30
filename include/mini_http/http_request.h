@@ -19,4 +19,6 @@ struct HttpRequest {
 
 };
 
+bool should_keep_alive(const HttpRequest& request);
+
 } // namespace

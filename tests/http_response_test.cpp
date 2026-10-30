@@ -159,6 +159,70 @@ void test_unsupported_status() {
             "expected std::invalid_argument waws not thrown");
 }
 
+void test_connection_header() {
+    struct ConnectionCase {
+        const char* name;
+        bool keep_alive;
+        std::string body;
+        std::string_view expected_connection;
+        std::size_t expected_length;
+    };
+
+    const ConnectionCase cases[] = {
+        {"explicit close", false,
+            "hello","Connection: close\r\n", 5},
+        {"keep alive", true,
+            "hello", "Connection: keep-alive\r\n", 5},
+        {"empty body", true,
+            "", "Connection: keep-alive\r\n", 0},
+        {"binary body", true,
+            std::string("a\0b\r\n", 5), "Connection: keep-alive\r\n", 5}
+    };
+
+    for(const ConnectionCase& test : cases) {
+        HttpResponse response;
+        response.keep_alive = test.keep_alive;
+        response.body = test.body;
+        response.extra_headers.emplace_back("X-Test", "yes");
+
+        const std::string actual = response.serialize();
+        const std::size_t separator = actual.find("\r\n\r\n");
+
+        expect(separator != std::string::npos,
+            test.name, "cannot find separator");
+
+        const std::string headers = actual.substr(0, separator + 4);
+        const std::string actual_body = actual.substr(separator + 4);
+
+        const std::size_t pos = headers.find("\r\nConnection: ");
+        expect(pos != std::string::npos,
+            test.name, "cannot find Connection");
+
+        expect(headers.find("\r\nConnection: ", pos + 1) == std::string::npos,
+            test.name, "Connection appear twice");
+
+        const std::string expected_length_header =
+            "\r\nContent-Length: " +
+            std::to_string(test.expected_length) +
+            "\r\n";
+
+        expect(headers.find(expected_length_header) != std::string::npos,
+            test.name, "cannot find correct content-length");
+
+        const std::string expected_connection_header =
+            "\r\n" + std::string(test.expected_connection);
+
+        expect(headers.find(expected_connection_header) != std::string::npos,
+            test.name, "connection header mismatch");
+
+        expect(actual_body == test.body,
+            test.name, "body dismatch");
+
+        expect(headers.find("\r\nX-Test: yes\r\n") != std::string::npos,
+            test.name, "X-Test header missing or malformed");
+    }
+}
+
 
 } // namespace
 
@@ -174,7 +238,8 @@ int main() {
         {"binary body", test_binary_body},
         {"extra headers", test_extra_headers},
         {"empty body", test_empty_body},
-        {"unsupported status", test_unsupported_status}
+        {"unsupported status", test_unsupported_status},
+        {"connection header", test_connection_header}
     };
 
     for(const TestGroup& group : groups) {
@@ -187,7 +252,7 @@ int main() {
         }
     }
 
-    std::cout << "All 6 HTTP response test groups pass\n";
+    std::cout << "All 7 HTTP response test groups pass\n";
 
 
     return 0;

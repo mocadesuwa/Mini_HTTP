@@ -326,4 +326,4 @@ ParseResult HttpParser::parse_request(
     return ParseResult::Complete;
 }
 
-}
+} // namespace

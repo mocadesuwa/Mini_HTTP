@@ -12,6 +12,8 @@ struct HttpResponse {
 
     std::vector<std::pair<std::string, std::string>> extra_headers;
 
+    bool keep_alive{false};
+
     std::string serialize() const;
 };
 

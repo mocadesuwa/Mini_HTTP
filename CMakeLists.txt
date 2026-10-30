@@ -16,6 +16,7 @@ add_library(mini_http
             src/http_parser.cpp
             src/http_response.cpp
             src/http_handler.cpp
+            src/http_request.cpp
             src/event_loop.cpp
             src/acceptor.cpp
             src/connection.cpp
@@ -40,6 +41,8 @@ target_link_libraries(test_http_response PRIVATE mini_http)
 add_executable(test_http_handler tests/http_handler_test.cpp)
 target_link_libraries(test_http_handler PRIVATE mini_http)
 
+add_executable(test_http_request tests/http_request_test.cpp)
+target_link_libraries(test_http_request PRIVATE mini_http)
 
 add_executable(test_path_root tests/path_root_test.cpp)
 target_link_libraries(test_path_root PRIVATE mini_http)
@@ -51,6 +54,7 @@ enable_testing()
 add_test(NAME http_parser COMMAND test_http_parser)
 add_test(NAME http_response COMMAND test_http_response)
 add_test(NAME http_handler COMMAND test_http_handler)
+add_test(NAME http_request COMMAND test_http_request)
 add_test(NAME path_root COMMAND test_path_root)
 add_test(NAME path_resolve COMMAND test_path_resolve)
 set_tests_properties(http_handler path_resolve PROPERTIES
@@ -71,6 +75,9 @@ target_compile_options(test_http_response
     PRIVATE -Wall -Wextra -Wpedantic)
 
 target_compile_options(test_http_handler
+    PRIVATE -Wall -Wextra -Wpedantic)
+
+target_compile_options(test_http_request
     PRIVATE -Wall -Wextra -Wpedantic)
 
 

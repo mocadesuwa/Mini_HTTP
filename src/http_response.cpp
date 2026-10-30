@@ -39,7 +39,11 @@ std::string HttpResponse::serialize() const {
 
     result += "Content-Length: " + std::to_string(body.size()) + "\r\n";
 
-    result += "Connection: close\r\n";
+    if(keep_alive) {
+        result += "Connection: keep-alive\r\n";
+    } else {
+        result += "Connection: close\r\n";
+    }
 
     for(const auto& [name, value] : extra_headers) {
         result += name + ": ";
