@@ -26,6 +26,19 @@ ReadResult read_request(
     char buffer[4096];
 
     while (true) {
+
+        const ParseResult result =
+            parser.parse_request(request_bytes, request, consumed_bytes);
+
+        if(result == ParseResult::Complete) {
+            request_bytes.erase(0, consumed_bytes);
+            return ReadResult::Complete;
+        }
+
+        if(result == ParseResult::BadRequest) {
+            return ReadResult::BadRequest;
+        }
+
         ssize_t n = recv(
             client_fd,
             buffer,
@@ -34,17 +47,7 @@ ReadResult read_request(
 
         if(n > 0) {
             request_bytes.append(buffer, static_cast<std::size_t>(n));
-
-            ParseResult result = parser.parse_request(
-                    request_bytes, request, consumed_bytes);
-
-            if(result == ParseResult::Complete) {
-                return ReadResult::Complete;
-            } else if(result == ParseResult::NeedMore) {
-                continue;
-            } else{
-                return ReadResult::BadRequest;
-            }
+            continue;
         }
 
         if(n == 0) {
