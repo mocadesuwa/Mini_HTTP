@@ -231,20 +231,25 @@ bool Server::dispatch_request(
         return false;
     }
 
+    const bool keep_alive = should_keep_alive(request);
+
     return thread_pool_.submit(
-        [this, client_fd, id, request = std::move(request)] {
+        [this, client_fd, id, request = std::move(request), keep_alive] {
             std::string bytes;
             bool succeeded = false;
 
             try {
-                bytes = handle_request(request, document_root_).serialize();
+                HttpResponse response = handle_request(request, document_root_);
+                response.keep_alive = keep_alive;
+                bytes = response.serialize();
+
                 succeeded = true;
             } catch(...) {
                 std::cerr << "HTTP handler failed\n";
             }
 
             const bool posted = event_loop_.post(
-                [this, client_fd, id, succeeded,
+                [this, client_fd, id, succeeded, keep_alive,
                 bytes = std::move(bytes)]() mutable {
                     auto it = connections_.find(client_fd);
 
@@ -253,7 +258,8 @@ bool Server::dispatch_request(
                     }
 
                     if(!succeeded ||
-                        !it->second.start_response(event_loop_, std::move(bytes))) {
+                        !it->second.start_response(
+                            event_loop_, std::move(bytes), keep_alive)) {
                         close_connection(client_fd);
                     }
                 }

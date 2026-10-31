@@ -7,7 +7,7 @@
 项目从阻塞 Socket 开始，逐步实现 HTTP 请求解析、响应生成，
 再使用非阻塞读写和 epoll，让一个线程同时管理多个客户端连接。
 
-当前已完成 Phase 1～Phase 5。正式服务器采用单线程、LT 模式的
+当前已完成 Phase 1～Phase 6。正式服务器采用单线程、LT 模式的
 epoll 事件循环，每个连接处理一次请求，发送响应后关闭连接。将
 server中的功能进行了职责划分，使成为一个完整的单线程Reactor。
 
@@ -69,6 +69,19 @@ server中的功能进行了职责划分，使成为一个完整的单线程React
 - worker 负责文件读取与响应生成，
   IO 线程负责 Socket 收发，响应发送完毕后关闭连接。
 
+### Phase 6： HTTP/1.1 Keep-Alive
+
+- 支持同一个 TCP 连接按顺序完成多轮请求与响应。
+- HTTP/1.1 默认保持连接；根据 Connection 头决定复用或关闭，
+  多个字段或逗号分隔值中出现独立的 close 标记时，优先关闭。
+- 响应发送完毕后，按连接策略关闭连接，
+  或重置本轮响应状态并继续处理下一条请求。
+- 每次只消费当前请求的字节，保留缓冲区中后续请求的数据，
+  支持连续请求及分段到达的请求。
+- 已缓冲的完整请求可直接继续处理，无需等待新的可读事件。
+- 单个连接内串行处理请求，保持响应顺序；
+  IO 线程与 worker 的职责划分保持不变。
+- Parser 判定请求非法时，返回 400 并关闭连接。
 
 ## 构建与运行
 
@@ -97,7 +110,7 @@ curl --noproxy '*' -i http://127.0.0.1:8081/
   Content-Length、读取权限不足及恢复，以及响应后主动关闭连接。
 
 
-项目包含 `http_parser`、`http_response`、`http_handler`、`path_root`、`path_resolve` 五组自动化测试:
+项目包含 `http_parser`、`http_response`、`http_handler`、`path_root`、`path_resolve`、`http_request`、 `connection` 五组自动化测试:
 
 ```bash
 ctest --test-dir build --output-on-failure

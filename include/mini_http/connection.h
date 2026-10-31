@@ -69,15 +69,19 @@ public:
     bool has_response() const noexcept;
     void set_response(std::string bytes);
 
-    ConnectionAction handle_event(EventLoop& event_loop, HttpRequest& request);
+    ConnectionAction handle_event(
+        EventLoop& event_loop, HttpRequest& request);
 
-    bool start_response(EventLoop& event_loop, std::string bytes);
+    bool start_response(
+        EventLoop& event_loop, std::string bytes, bool keep_alive = false);
 
 private:
     int client_fd_{-1};
     std::uint64_t id_{0};
     ConnectionState state_;
     bool processing_{false};
+
+    bool keep_alive_{false};
 };
 
 } // namespace

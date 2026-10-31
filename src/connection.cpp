@@ -163,9 +163,10 @@ bool watch_writable(EventLoop& event_loop, int client_fd) {
 
 } // inner namespace
 
-bool Connection::start_response(EventLoop& event_loop, std::string bytes) {
+bool Connection::start_response(
+    EventLoop& event_loop, std::string bytes, bool keep_alive) {
     set_response(std::move(bytes));
-
+    keep_alive_ = keep_alive;
     // 业务完成，连接开始准备发送
     processing_ = false;
     return watch_writable(event_loop, client_fd_);
@@ -186,38 +187,51 @@ ConnectionAction Connection::handle_event(EventLoop& event_loop, HttpRequest& re
 
         if(write_result == WriteResult::IoError) {
             std::cerr << "Failed to send response\n";
+            return ConnectionAction::Close;
         }
-    } else {
 
-        const ReadResult result = read_request(request);
+        if(!keep_alive_) {
+            return ConnectionAction::Close;
+        }
 
-        switch(result) {
-            case ReadResult::Complete: {
-                processing_ = true;
-                return ConnectionAction::RequestReady;
-            }
+        state_.response_bytes.clear();
+        state_.sent_bytes = 0;
 
-            case ReadResult::WouldBlock:
+        if(!event_loop.modify_fd(client_fd_, EPOLLIN)) {
+            std::perror("epoll_ctl MOD read");
+            return ConnectionAction::Close;
+        }
+
+    }
+
+    const ReadResult result = read_request(request);
+
+    switch(result) {
+        case ReadResult::Complete: {
+            processing_ = true;
+            return ConnectionAction::RequestReady;
+        }
+
+        case ReadResult::WouldBlock:
+            return ConnectionAction::Keep;
+
+        case ReadResult::PeerClosed:
+            break;
+
+        case ReadResult::BadRequest: {
+            HttpResponse response;
+            response.status_code = 400;
+            response.body = "Bad request\n";
+
+            if(start_response(event_loop, response.serialize())) {
                 return ConnectionAction::Keep;
-
-            case ReadResult::PeerClosed:
-                break;
-
-            case ReadResult::BadRequest: {
-                HttpResponse response;
-                response.status_code = 400;
-                response.body = "Bad request\n";
-
-                if(start_response(event_loop, response.serialize())) {
-                    return ConnectionAction::Keep;
-                }
-                break;
             }
-
-            case ReadResult::IoError:
-                std::cerr << "Failed to read request\n";
-                break;
+            break;
         }
+
+        case ReadResult::IoError:
+            std::cerr << "Failed to read request\n";
+            break;
     }
 
     return ConnectionAction::Close;
