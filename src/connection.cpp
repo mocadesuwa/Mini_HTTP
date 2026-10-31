@@ -3,6 +3,7 @@
 #include "mini_http/event_loop.h"
 #include "mini_http/http_handler.h"
 #include "mini_http/http_response.h"
+#include "mini_http/logger.h"
 
 #include <unistd.h>
 #include <sys/socket.h>
@@ -11,6 +12,7 @@
 #include <iostream>
 #include <utility>
 #include <cstdio>
+#include <string>
 
 namespace mini_http {
 
@@ -67,8 +69,9 @@ ReadResult read_request(
         }
 
         const int error_code = errno;
-        std::cerr << "recv failed: "
-                  << std::strerror(error_code) << '\n';
+
+        log(LogLevel::Error,
+            std::string("recv failed: ") + std::strerror(error_code));
 
         return ReadResult::IoError;
     }
@@ -154,7 +157,10 @@ namespace  {
 
 bool watch_writable(EventLoop& event_loop, int client_fd) {
     if(!event_loop.modify_fd(client_fd, EPOLLOUT)) {
-        std::perror("error_ctl MOD");
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("epoll_ctl MOD write failed: ") + std::strerror(error_code));
         return false;
     }
 
@@ -186,7 +192,8 @@ ConnectionAction Connection::handle_event(EventLoop& event_loop, HttpRequest& re
         }
 
         if(write_result == WriteResult::IoError) {
-            std::cerr << "Failed to send response\n";
+            log(LogLevel::Error,
+                std::string("Failed to send response"));
             return ConnectionAction::Close;
         }
 
@@ -198,7 +205,10 @@ ConnectionAction Connection::handle_event(EventLoop& event_loop, HttpRequest& re
         state_.sent_bytes = 0;
 
         if(!event_loop.modify_fd(client_fd_, EPOLLIN)) {
-            std::perror("epoll_ctl MOD read");
+            const int error_code = errno;
+
+            log(LogLevel::Error,
+                std::string("epoll_ctl MOD read failed: ") + std::strerror(error_code));
             return ConnectionAction::Close;
         }
 
@@ -230,7 +240,8 @@ ConnectionAction Connection::handle_event(EventLoop& event_loop, HttpRequest& re
         }
 
         case ReadResult::IoError:
-            std::cerr << "Failed to read request\n";
+            log(LogLevel::Error,
+                std::string("Failed to read request"));
             break;
     }
 

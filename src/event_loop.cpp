@@ -1,4 +1,5 @@
 #include "mini_http/event_loop.h"
+#include "mini_http/logger.h"
 
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
@@ -6,6 +7,8 @@
 #include <cerrno>
 #include <cstdio>
 #include <utility>
+#include <string>
+#include <cstring>
 
 namespace mini_http {
 
@@ -13,14 +16,20 @@ EventLoop::EventLoop() :
     epoll_fd_(epoll_create1(0)) {
 
     if(epoll_fd_ == -1) {
-        std::perror("epoll_create1");
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("epoll_create1 failed: ") + std::strerror(error_code));
         return;
     }
 
     wakeup_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
 
     if(wakeup_fd_ == -1) {
-        std::perror("eventfd");
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("eventfd failed: ") + std::strerror(error_code));
 
         close(epoll_fd_);
         epoll_fd_ = -1;
@@ -28,7 +37,10 @@ EventLoop::EventLoop() :
     }
 
     if(!add_fd(wakeup_fd_, EPOLLIN)) {
-        std::perror("epoll_ctl wakeup");
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("epoll_ctl wakeup failed: ") + std::strerror(error_code));
 
         close(wakeup_fd_);
         wakeup_fd_ = -1;
@@ -94,8 +106,11 @@ int EventLoop::loop(const EventHandler& handler) {
             if(errno == EINTR) {
                 continue;
             }
+            const int error_code = errno;
 
-            std::perror("epoll_wait");
+            log(LogLevel::Error,
+                std::string("epoll_wait failed: ") + std::strerror(error_code));
+
             return -1;
         }
 
@@ -140,7 +155,11 @@ bool EventLoop::wakeup() {
             return true;
         }
 
-        std::perror("eventfd write");
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("eventfd write failed: ") + std::strerror(error_code));
+
         return false;
     }
 }
@@ -164,8 +183,11 @@ bool EventLoop::consume_wakeup() {
             (errno == EAGAIN || errno == EWOULDBLOCK)) {
             return true;
         }
+        const int error_code = errno;
 
-        std::perror("eventfd read");
+        log(LogLevel::Error,
+            std::string("eventfd read failed: ") + std::strerror(error_code));
+
         return false;
     }
 }

@@ -3,6 +3,7 @@
 #include "mini_http/http_response.h"
 #include "mini_http/event_loop.h"
 #include "mini_http/acceptor.h"
+#include "mini_http/logger.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -13,11 +14,10 @@
 #include <exception>
 #include <unordered_map>
 #include <utility>
-
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <cstdio>
-
+#include <string>
 
 namespace mini_http {
 
@@ -25,13 +25,25 @@ bool set_nonblocking(int fd) {
     const int flags = fcntl(fd, F_GETFL);
 
     if(flags == -1) {
-        std::perror("fcntl F_GETFL");
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("fcntl F_GETFL failed: ") + std::strerror(error_code));
         return false;
     }
 
     const int new_flags = flags | O_NONBLOCK;
 
     const int result = fcntl(fd, F_SETFL, new_flags);
+
+    if(result == -1) {
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("fcntl F_SETFL failed: ") + std::strerror(error_code));
+
+        return false;
+    }
 
     return result == 0;
 }
@@ -42,8 +54,11 @@ int create_listen_socket(std::uint16_t port) {
                             0);
 
     if(listen_fd < 0) {
-        std::cerr << "socket failed: "
-                  << std::strerror(errno) << '\n';
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("socket failed: ") + std::strerror(error_code));
+
         return -1;
     }
 
@@ -53,8 +68,11 @@ int create_listen_socket(std::uint16_t port) {
                     SO_REUSEADDR,
                     &opt,
                     sizeof(opt)) < 0) {
-        std::cerr << "setsocket failed: "
-                  << std::strerror(errno) << '\n';
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("setsockopt failed: ") + std::strerror(error_code));
+
         close(listen_fd);
         return -1;
     }
@@ -68,16 +86,20 @@ int create_listen_socket(std::uint16_t port) {
     if(bind(listen_fd,
             reinterpret_cast<sockaddr*>(&listen_addr),
             sizeof(listen_addr))  < 0) {
-        std::cerr << "bind failed: "
-                  << std::strerror(errno) << '\n';
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("bind failed: ") + std::strerror(error_code));
 
         close(listen_fd);
         return -1;
     }
 
     if(listen(listen_fd, 10) < 0) {
-        std::cerr << "listen failed: "
-                  << std::strerror(errno) << '\n';
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("listen failed: ") + std::strerror(error_code));
 
         close(listen_fd);
         return -1;
@@ -125,7 +147,8 @@ Server::Server(std::uint16_t port)
 
 int Server::run() {
     if(acceptor_.fd() == -1) {
-        std::perror("accerptor_fd");
+        log(LogLevel::Error,
+            "listen socket initialization failed");
         return -1;
     }
 
@@ -134,14 +157,21 @@ int Server::run() {
     }
 
     if(event_loop_.fd() == -1) {
-        std::perror("epoll_create1");
+        log(LogLevel::Error,
+            "event loop initialization failed");
         return -1;
     }
 
     if(!event_loop_.add_fd(acceptor_.fd(), EPOLLIN)) {
-        std::perror("add_fd");
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("epoll_ctl ADD listen socket failed: ") +
+            std::strerror(error_code));
         return -1;
     }
+
+    log(LogLevel::Info, "server started");
 
     return event_loop_.loop(
         [this](int fd, std::uint32_t events) {
@@ -152,11 +182,13 @@ int Server::run() {
 
 bool Server::handle_event(int fd, std::uint32_t events) {
     if((events & EPOLLHUP) != 0) {
-        std::cout << "EPOLLHUP fd=" << fd << '\n';
+        log(LogLevel::Info,
+            std::string("EPOLLHUP fd=") + std::to_string(fd));
     }
 
     if((events & EPOLLERR) != 0) {
-        std::cout << "EPOLLERR fd=" << fd << '\n';
+        log(LogLevel::Error,
+            std::string("EPOLLERR fd=") + std::to_string(fd));
     }
 
     if(fd == acceptor_.fd()) {
@@ -168,16 +200,24 @@ bool Server::handle_event(int fd, std::uint32_t events) {
                 errno == EINTR) {
                 return true;
             }
+            const int error_code = errno;
 
-            std::perror("accept");
+            log(LogLevel::Error,
+                std::string("accept failed: ") + std::strerror(error_code));
             return false;
         }
         connections_.try_emplace(
             client_fd, client_fd, next_connection_id_++);
 
         if(!event_loop_.add_fd(client_fd, EPOLLIN)) {
-            std::perror("epoll_ctl client");
+            const int error_code = errno;
+            log(LogLevel::Error,
+                std::string("epoll_ctl ADD client failed: ") + std::strerror(error_code));
+
             connections_.erase(client_fd);
+        } else {
+            log(LogLevel::Info,
+                std::string("accepted connection fd=") + std::to_string(client_fd));
         }
 
         return true;
@@ -227,7 +267,10 @@ bool Server::dispatch_request(
     int client_fd, std::uint64_t id, HttpRequest request) {
 
     if(!event_loop_.modify_fd(client_fd, 0)) {
-        std::perror("epoll_ctl pause");
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("epoll_ctl MOD pause failed: ") + std::strerror(error_code));
         return false;
     }
 
@@ -245,7 +288,7 @@ bool Server::dispatch_request(
 
                 succeeded = true;
             } catch(...) {
-                std::cerr << "HTTP handler failed\n";
+                log(LogLevel::Error, "HTTP handler failed");
             }
 
             const bool posted = event_loop_.post(
@@ -266,7 +309,7 @@ bool Server::dispatch_request(
             );
 
             if(!posted) {
-                std::cerr << "post response failed\n";
+                log(LogLevel::Error, "post response failed");
             }
 
         });
@@ -274,10 +317,19 @@ bool Server::dispatch_request(
 
 void Server::close_connection(int client_fd) {
     if(!event_loop_.remove_fd(client_fd)) {
-        std::perror("epoll_ctl DEL");
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("epoll_ctl DEL failed: ") + std::strerror(error_code));
     }
 
-    connections_.erase(client_fd);
+    const std::size_t removed = connections_.erase(client_fd);
+
+    if(removed == 1) {
+        log(LogLevel::Info,
+            std::string("closed connection fd=") +
+            std::to_string(client_fd));
+    }
 }
 
 } // namespace
