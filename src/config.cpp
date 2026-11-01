@@ -56,7 +56,8 @@ ConfigParseResult parse_arguments(
 
         if(option != "--port" &&
             option != "--root" &&
-            option != "--threads") {
+            option != "--threads" &&
+            option != "--idle-timeout") {
 
             error = std::string("unknown option: ") + std::string(option);
 
@@ -101,6 +102,25 @@ ConfigParseResult parse_arguments(
 
             parsed_config.document_root =
                 std::filesystem::path(argument_value);
+        } else if(option == "--idle-timeout") {
+            using SecondsRep = std::chrono::seconds::rep;
+
+            const std::size_t max_seconds =
+                static_cast<std::size_t>(
+                    std::numeric_limits<SecondsRep>::max());
+
+            std::size_t number = 0;
+
+            if(!parse_positive_integer(
+                argument_value,
+                max_seconds,
+                number)) {
+
+                error = "invalid value for --idle-timeout";
+                return ConfigParseResult::Error;
+            }
+            parsed_config.idle_timeout =
+                std::chrono::seconds{static_cast<SecondsRep>(number)};
         }
     }
 

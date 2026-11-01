@@ -5,6 +5,7 @@
 #include <string>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 
 namespace mini_http {
 
@@ -24,9 +25,12 @@ enum class WriteResult {
 
 struct ConnectionState {
     std::string request_bytes;
-
     std::string response_bytes;
     std::size_t sent_bytes{0};
+
+    std::chrono::steady_clock::time_point io_idle_since{
+        std::chrono::steady_clock::now()
+    };
 };
 
 ReadResult read_request(
@@ -74,6 +78,10 @@ public:
 
     bool start_response(
         EventLoop& event_loop, std::string bytes, bool keep_alive = false);
+
+    bool idle_timed_out(
+        std::chrono::steady_clock::time_point now,
+        std::chrono::seconds idle_timeout) const noexcept;
 
 private:
     int client_fd_{-1};

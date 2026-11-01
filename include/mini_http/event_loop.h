@@ -25,12 +25,15 @@ public:
     int wait(epoll_event* ready_events, int max_events, int timeout_ms);
 
     using EventHandler = std::function<bool(int, std::uint32_t)>;
+    using Task = std::function<void()>;
 
-    int loop(const EventHandler& handler);
+    int loop(
+        const EventHandler& handler,
+        int timeout_ms = -1,
+        const Task& on_tick = {});
 
     bool wakeup();
 
-    using Task = std::function<void()>;
     bool post(Task task);
 
 private:

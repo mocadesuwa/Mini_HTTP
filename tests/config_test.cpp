@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <chrono>
+#include <cstdint>
 
 namespace {
 
@@ -21,6 +23,9 @@ void test_parse_success() {
         std::vector<const char*> arguments;
         mini_http::ServerConfig expected;
     };
+
+    const std::string maximum_idle =
+        std::to_string(std::chrono::seconds::max().count());
 
     const SuccessCase cases[] = {
         {
@@ -47,9 +52,10 @@ void test_parse_success() {
             "all options reordered",
             {
                 "mini_http_server", "--threads", "4",
-                "--root", "assets", "--port", "8082"
+                "--root", "assets", "--idle-timeout", "5",
+                "--port", "8082"
             },
-            {8082, "assets", 4}
+            {8082, "assets", 4, std::chrono::seconds{5}}
         },
         {
             "minimum port",
@@ -65,11 +71,28 @@ void test_parse_success() {
             "minimum threads",
             {"mini_http_server", "--threads", "1"},
             {8081, "www", 1}
+        },
+        {
+            "idle timeout override",
+            {"mini_http_server", "--idle-timeout", "2"},
+            {8081, "www", 2, std::chrono::seconds{2}}
+        },
+        {
+            "minimum idle timeout",
+            {"mini_http_server", "--idle-timeout", "1"},
+            {8081, "www", 2, std::chrono::seconds{1}}
+        },
+        {
+            "maximum idle timeout",
+            {"mini_http_server", "--idle-timeout", maximum_idle.c_str()},
+            {8081, "www", 2, std::chrono::seconds::max()}
         }
     };
 
     for(const SuccessCase& test : cases) {
-        mini_http::ServerConfig config{9000, "original-root", 7};
+        mini_http::ServerConfig config{
+            9000, "original-root",
+            7, std::chrono::seconds{77}};
         std::string error = "old error";
 
         mini_http::ConfigParseResult result =
@@ -87,6 +110,8 @@ void test_parse_success() {
                 test.name, "thread count mismatch");
         expect(error.empty(),
                 test.name, "error was not cleared");
+        expect(config.idle_timeout == test.expected.idle_timeout,
+                test.name, "idle timeout mismatch");
     }
 }
 
@@ -104,11 +129,17 @@ void test_parse_help() {
         {
             "help after port override",
             {"mini_http_server", "--port", "8082", "--help"}
+        },
+        {
+            "help after idle timeout",
+            {"mini_http_server", "--idle-timeout", "2", "--help"}
         }
     };
 
     for(const HelpCase& test : cases) {
-        const mini_http::ServerConfig original{9000, "original-root", 7};
+        const mini_http::ServerConfig original{
+            9000, "original-root", 7, std::chrono::seconds{77}
+        };
         mini_http::ServerConfig config = original;
         std::string error = "old error";
 
@@ -125,6 +156,8 @@ void test_parse_help() {
                 test.name, "document root changed on help");
         expect(config.thread_count == original.thread_count,
                 test.name, "thread count changed on help");
+        expect(config.idle_timeout == original.idle_timeout,
+                test.name, "idle timeout changed on help");
         expect(error.empty(),
                 test.name, "error was not cleared");
     };
@@ -133,6 +166,12 @@ void test_parse_help() {
 void test_parse_error() {
     const char* overflow_number =
         "9999999999999999999999999999999999999999";
+
+    // 先转为无符号类型，避免在秒数最大值上直接加一溢出。
+    const std::string too_large_idle =
+        std::to_string(
+            static_cast<std::uintmax_t>(
+                std::chrono::seconds::max().count()) + 1);
 
     struct ErrorCase {
         const char* name;
@@ -215,11 +254,38 @@ void test_parse_error() {
             "error after valid option",
             {"mini_http_server", "--port", "8082", "--threads", "0"},
             "--threads"
+        },
+        {
+            "missing idle timeout",
+            {"mini_http_server", "--idle-timeout"},
+            "--idle-timeout"
+        },
+        {
+            "zero idle timeout",
+            {"mini_http_server", "--idle-timeout", "0"},
+            "--idle-timeout"
+        },
+        {
+            "invalid idle timeout suffix",
+            {"mini_http_server", "--idle-timeout", "2s"},
+            "--idle-timeout"
+        },
+        {
+            "idle timeout out of range",
+            {"mini_http_server", "--idle-timeout", too_large_idle.c_str()},
+            "--idle-timeout"
+        },
+        {
+            "error after idle timeout",
+            {"mini_http_server", "--idle-timeout", "2", "--port", "0"},
+            "--port"
         }
     };
 
     for(const ErrorCase& test : cases) {
-        const mini_http::ServerConfig original{9000, "original-root", 7};
+        const mini_http::ServerConfig original{
+            9000, "original-root", 7, std::chrono::seconds{77}
+        };
         mini_http::ServerConfig config = original;
         std::string error = "old error";
 
@@ -236,6 +302,8 @@ void test_parse_error() {
                 test.name, "document root changed on error");
         expect(config.thread_count == original.thread_count,
                 test.name, "thread count changed on error");
+        expect(config.idle_timeout == original.idle_timeout,
+                test.name, "idle timeout changed on error");
         expect(error.find(test.expected_option) != std::string::npos,
                 test.name, "error does not identify the option");
     }

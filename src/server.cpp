@@ -145,7 +145,9 @@ bool send_all(int client_fd, std::string_view bytes) {
 Server::Server(const ServerConfig& config) :
     acceptor_ (create_listen_socket(config.port)),
     document_root_(std::filesystem::absolute(config.document_root)),
+    idle_timeout_(config.idle_timeout),
     thread_pool_(config.thread_count) {
+
 }
 
 //  委托构造
@@ -184,6 +186,10 @@ int Server::run() {
     return event_loop_.loop(
         [this](int fd, std::uint32_t events) {
             return handle_event(fd, events);
+        },
+        1000,
+        [this] {
+            close_idle_connections(idle_timeout_);
         }
     );
 }
@@ -380,6 +386,26 @@ void Server::close_connection(int client_fd) {
         log(LogLevel::Info,
             std::string("closed connection fd=") +
             std::to_string(client_fd));
+    }
+}
+
+void Server::close_idle_connections(std::chrono::seconds idle_timed_out) {
+    const auto now = std::chrono::steady_clock::now();
+
+    auto it = connections_.begin();
+
+    while(it != connections_.end()) {
+        const int client_fd = it->first;
+        const bool timed_out =
+            it->second.idle_timed_out(now, idle_timed_out);
+
+        ++it;
+
+        if(timed_out) {
+            log(LogLevel::Info,
+                std::string("idle timeout fd=") + std::to_string(client_fd));
+            close_connection(client_fd);
+        }
     }
 }
 

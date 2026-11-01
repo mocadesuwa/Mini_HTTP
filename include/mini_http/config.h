@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <chrono>
 
 namespace mini_http {
 
@@ -11,6 +12,7 @@ struct ServerConfig {
     std::uint16_t port{8081};
     std::filesystem::path document_root{"www"};
     std::size_t thread_count{2};
+    std::chrono::seconds idle_timeout{30};
 };
 
 enum class ConfigParseResult {

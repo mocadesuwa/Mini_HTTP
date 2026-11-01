@@ -15,10 +15,11 @@ int main(int argc, char* argv[]) {
     if(result == mini_http::ConfigParseResult::Help) {
         const char* usage =
             "Usage: mini_http_server [--port PORT] [--root PATH] "
-            "[--threads N] [--help]\n"
+            "[--threads N] [--idle-timeout SECONDS] [--help]\n"
             "  --port PORT   Listen port (default: 8081)\n"
             "  --root PATH   Static file directory (default: www)\n"
             "  --threads N   Worker thread count (default: 2)\n"
+            "  --idle-timeout SECONDS  IO idle timeout (default: 30 seconds)\n"
             "  --help        Show this help\n";
 
         std::cout << usage;

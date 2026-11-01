@@ -48,6 +48,8 @@ ReadResult read_request(
             MSG_DONTWAIT);
 
         if(n > 0) {
+            connection.io_idle_since = std::chrono::steady_clock::now();
+
             request_bytes.append(buffer, static_cast<std::size_t>(n));
             continue;
         }
@@ -89,8 +91,10 @@ WriteResult flush_response(
             MSG_NOSIGNAL | MSG_DONTWAIT);
 
         if(n > 0) {
-            connection.sent_bytes +=
-                static_cast<std::size_t>(n);
+            connection.io_idle_since = std::chrono::steady_clock::now();
+
+
+            connection.sent_bytes += static_cast<std::size_t>(n);
             continue;
         }
 
@@ -175,6 +179,7 @@ bool Connection::start_response(
     keep_alive_ = keep_alive;
     // 业务完成，连接开始准备发送
     processing_ = false;
+    state_.io_idle_since = std::chrono::steady_clock::now();
     return watch_writable(event_loop, client_fd_);
 }
 
@@ -246,6 +251,20 @@ ConnectionAction Connection::handle_event(EventLoop& event_loop, HttpRequest& re
     }
 
     return ConnectionAction::Close;
+}
+
+bool Connection::idle_timed_out(
+    std::chrono::steady_clock::time_point now,
+    std::chrono::seconds idle_timeout) const noexcept {
+
+    if(processing_ == true) {
+        return false;
+    }
+
+    std::chrono::seconds time_diff = std::chrono::duration_cast<std::chrono::seconds>(
+        now - state_.io_idle_since);
+
+    return time_diff >= idle_timeout;
 }
 
 } // namespace

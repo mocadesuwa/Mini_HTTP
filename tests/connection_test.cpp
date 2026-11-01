@@ -1,9 +1,15 @@
 #include "mini_http/connection.h"
 #include "mini_http/http_request.h"
+#include "mini_http/event_loop.h"
 
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <chrono>
+#include <cerrno>
+
 
 namespace {
 
@@ -11,6 +17,9 @@ using mini_http::Connection;
 using mini_http::ConnectionState;
 using mini_http::HttpRequest;
 using mini_http::ReadResult;
+using mini_http::EventLoop;
+using Clock = std::chrono::steady_clock;
+
 
 void expect(bool condition, std::string_view case_name, std::string_view message) {
     if(!condition) {
@@ -203,6 +212,217 @@ void test_bad_buffered_request() {
     }
 }
 
+void test_idle_timeout() {
+    struct IdleCase {
+        const char* name;
+        std::chrono::milliseconds elapsed;
+        bool expected;
+    };
+
+    const IdleCase cases[] = {
+        {"just created", std::chrono::milliseconds(0), false},
+        {"before deadline", std::chrono::milliseconds(29999), false},
+        {"at deadline", std::chrono::milliseconds(30000), true},
+        {"after deadline", std::chrono::milliseconds(30001), true}
+    };
+
+    for(const IdleCase& test : cases) {
+        int sockets[2]{-1, -1};
+
+        expect(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0,
+            test.name, "socketpair failed");
+
+        Connection receiver(sockets[0], 1);
+        Connection peer(sockets[1], 2);
+
+        const Clock::time_point base{};
+        const std::chrono::seconds timeout{30};
+
+        receiver.state().io_idle_since = base;
+
+        expect(receiver.idle_timed_out(base + test.elapsed, timeout) == test.expected,
+                test.name, "idle timeout result mismatch");
+
+        receiver.state().request_bytes =
+            "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+        EventLoop event_loop;
+        expect(event_loop.fd() != -1,
+                test.name, "event_loop create false fd");
+
+        HttpRequest request;
+        const auto action = receiver.handle_event(event_loop, request);
+
+        expect(action == mini_http::ConnectionAction::RequestReady,
+                test.name, "request did not become ready");
+
+        expect(receiver.processing(),
+                test.name, "processing flag was not set");
+
+        expect(!receiver.idle_timed_out(
+                base + std::chrono::seconds{60}, timeout),
+                test.name, "processing connection timed out");
+    }
+}
+
+void test_io_activity() {
+    int sockets[2]{-1, -1};
+
+    expect(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0,
+        "io activity", "socketpair failed");
+
+    Connection receiver(sockets[0], 1);
+    Connection peer(sockets[1], 2);
+
+    EventLoop event_loop;
+    expect(event_loop.fd() != -1,
+        "io activity", "event_loop create false fd");
+
+    expect(event_loop.add_fd(receiver.fd(), EPOLLIN),
+        "IO setup", "failed to register receiver");
+
+    const auto old_time =
+        Clock::now() - std::chrono::seconds{60};
+
+    receiver.state().io_idle_since = old_time;
+
+    HttpRequest request;
+
+    const auto empty_result = receiver.read_request(request);
+
+    expect(empty_result == ReadResult::WouldBlock,
+        "empty read", "expected WouldBlock");
+
+    expect(receiver.state().io_idle_since == old_time,
+        "empty read", "idle time changed without data");
+
+    const std::string prefix =
+        "GET / HTTP/1.1\r\nHost: local";
+
+    const ssize_t sent = send(
+        peer.fd(), prefix.data(), prefix.size(),
+        MSG_DONTWAIT | MSG_NOSIGNAL);
+
+    expect(sent == static_cast<ssize_t>(prefix.size()),
+        "partial read", "failed to send prefix");
+
+    const auto before_read = Clock::now();
+    const auto partial_result = receiver.read_request(request);
+    const auto after_read = Clock::now();
+
+    expect(partial_result == ReadResult::WouldBlock,
+        "partial read", "expected WouldBlock");
+
+    expect(receiver.state().io_idle_since >= before_read &&
+        receiver.state().io_idle_since <= after_read,
+        "partial read", "idle time was not refreshed");
+
+    receiver.state().request_bytes =
+        "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+    const auto action =
+        receiver.handle_event(event_loop, request);
+
+    expect(action == mini_http::ConnectionAction::RequestReady,
+        "response start", "request did not become ready");
+    expect(receiver.processing(),
+        "response start", "processing flag was not set");
+
+    receiver.state().io_idle_since = old_time;
+
+    const auto before_start = Clock::now();
+    const bool started =
+        receiver.start_response(event_loop, "hello", true);
+    const auto after_start = Clock::now();
+
+    expect(started,
+        "response start", "failed to start response");
+    expect(!receiver.processing(),
+        "response start", "processing flag was not cleared");
+    expect(receiver.state().io_idle_since >= before_start &&
+        receiver.state().io_idle_since <= after_start,
+        "response start", "idle time was not reset");
+
+    receiver.state().io_idle_since = old_time;
+
+    const auto before_write = Clock::now();
+    const auto write_result = receiver.flush_response();
+    const auto after_write = Clock::now();
+
+    expect(write_result == mini_http::WriteResult::Complete,
+        "write progress", "response was not fully sent");
+    expect(receiver.state().sent_bytes == 5,
+        "write progress", "sent byte count mismatch");
+    expect(receiver.state().io_idle_since >= before_write &&
+        receiver.state().io_idle_since <= after_write,
+        "write progress", "idle time was not refreshed");
+
+    // 验证实际收到的字节，并排空队列后再构造发送堵塞。
+    char response_bytes[5]{};
+    const ssize_t received = recv(
+        peer.fd(), response_bytes, sizeof(response_bytes), MSG_DONTWAIT);
+
+    expect(received == static_cast<ssize_t>(sizeof(response_bytes)),
+        "write progress", "peer did not receive the complete response");
+    expect(std::string(response_bytes, sizeof(response_bytes)) == "hello",
+        "write progress", "response bytes mismatch");
+
+    const int send_buffer_size = 4096;
+    expect(setsockopt(
+        receiver.fd(), SOL_SOCKET, SO_SNDBUF,
+        &send_buffer_size, sizeof(send_buffer_size)) == 0,
+        "blocked write", "failed to set send buffer size");
+
+    const std::string fill_bytes(4096, 'x');
+    constexpr int max_fill_attempts = 256;
+    bool send_buffer_full = false;
+
+    // 对端不再读取；发送必须非阻塞且限次，避免测试挂住。
+    for(int attempt = 0; attempt < max_fill_attempts; ++attempt) {
+        const ssize_t written = send(
+            receiver.fd(), fill_bytes.data(), fill_bytes.size(),
+            MSG_DONTWAIT | MSG_NOSIGNAL);
+
+        if(written > 0) {
+            continue;
+        }
+
+        if(written < 0) {
+            const int error_code = errno;
+
+            if(error_code == EINTR) {
+                continue;
+            }
+
+            if(error_code == EAGAIN || error_code == EWOULDBLOCK) {
+                send_buffer_full = true;
+                break;
+            }
+        }
+
+        expect(false,
+            "blocked write", "unexpected send result while filling buffer");
+    }
+
+    expect(send_buffer_full,
+        "blocked write", "send buffer did not become blocked within limit");
+
+    // 使用与堵塞探测相同长度的数据，避免较小写入仍能利用剩余空间。
+    receiver.set_response(fill_bytes);
+    receiver.state().io_idle_since = old_time;
+
+    const auto blocked_result = receiver.flush_response();
+
+    expect(blocked_result == mini_http::WriteResult::WouldBlock,
+        "blocked write", "expected WouldBlock");
+    expect(receiver.state().sent_bytes == 0,
+        "blocked write", "send made unexpected progress");
+    expect(receiver.state().io_idle_since == old_time,
+        "blocked write", "idle time changed without send progress");
+    expect(receiver.idle_timed_out(
+        Clock::now(), std::chrono::seconds{2}),
+        "blocked write", "stalled connection was not eligible for timeout");
+}
 
 } // namespace
 
@@ -215,7 +435,9 @@ int main() {
     const TestGroup groups[] = {
         {"bufferd request", test_buffered_requests},
         {"fragmented requests", test_fragmented_requests},
-        {"bad buffered requests", test_bad_buffered_request}
+        {"bad buffered requests", test_bad_buffered_request},
+        {"idle timeout", test_idle_timeout},
+        {"IO activity", test_io_activity}
     };
 
     for(const TestGroup& group : groups) {
@@ -228,7 +450,7 @@ int main() {
         }
     }
 
-    std::cout << "All 3 connection test pass\n";
+    std::cout << "All 5 connection test groups passed\n";
 
     return 0;
 }

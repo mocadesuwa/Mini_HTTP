@@ -10,6 +10,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <filesystem>
+#include <chrono>
 
 namespace mini_http {
 
@@ -45,7 +46,11 @@ private:
 
     void close_connection(int client_fd);
 
+    void close_idle_connections(std::chrono::seconds idle_timeout);
+
     const std::filesystem::path document_root_;
+
+    const std::chrono::seconds idle_timeout_;
 
     ThreadPool thread_pool_;
 };

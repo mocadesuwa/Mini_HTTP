@@ -95,23 +95,25 @@ int EventLoop::wait(
         epoll_fd_, ready_events, max_events, timeout_ms);
 }
 
-int EventLoop::loop(const EventHandler& handler) {
+int EventLoop::loop(
+    const EventHandler& handler,
+    int timeout_ms,
+    const Task& on_tick) {
     epoll_event ready_events[4]{};
 
     while(true) {
-        const int ready_count = wait(
-            ready_events, 4, -1);
+        int ready_count = wait(ready_events, 4, timeout_ms);
 
         if(ready_count == -1) {
-            if(errno == EINTR) {
-                continue;
-            }
             const int error_code = errno;
 
-            log(LogLevel::Error,
-                std::string("epoll_wait failed: ") + std::strerror(error_code));
-
-            return -1;
+            if(errno == EINTR) {
+                ready_count = 0;
+            } else {
+                log(LogLevel::Error,
+                    std::string("epoll_wait failed: ") + std::strerror(error_code));
+                return -1;
+            }
         }
 
         for(int i = 0; i < ready_count; i++) {
@@ -132,6 +134,10 @@ int EventLoop::loop(const EventHandler& handler) {
             if(!handler(fd, events)) {
                 return -1;
             }
+        }
+
+        if(on_tick) {
+            on_tick();
         }
     }
 }
