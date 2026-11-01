@@ -4,6 +4,7 @@
 #include "mini_http/acceptor.h"
 #include "mini_http/event_loop.h"
 #include "mini_http/thread_pool.h"
+#include "mini_http/config.h"
 
 #include <cstdint>
 #include <string_view>
@@ -19,10 +20,13 @@ bool send_all(
     std::string_view bytes
 );
 
+int run_server(const ServerConfig& config);
 int run_server(std::uint16_t port);
 
 class Server {
 public:
+
+    explicit Server(const ServerConfig& config);
     explicit Server(std::uint16_t port);
     int run();
 
@@ -41,11 +45,9 @@ private:
 
     void close_connection(int client_fd);
 
-    const std::filesystem::path document_root_{
-        std::filesystem::absolute("www")
-    };
+    const std::filesystem::path document_root_;
 
-    ThreadPool thread_pool_{2};
+    ThreadPool thread_pool_;
 };
 
 

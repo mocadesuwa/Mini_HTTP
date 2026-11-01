@@ -21,7 +21,8 @@ add_library(mini_http
             src/acceptor.cpp
             src/connection.cpp
             src/thread_pool.cpp
-            src/logger.cpp)
+            src/logger.cpp
+            src/config.cpp)
 
 target_link_libraries(mini_http PUBLIC Threads::Threads)
 
@@ -51,6 +52,9 @@ target_link_libraries(test_connection PRIVATE mini_http)
 add_executable(test_logger tests/logger_test.cpp)
 target_link_libraries(test_logger PRIVATE mini_http)
 
+add_executable(test_config tests/config_test.cpp)
+target_link_libraries(test_config PRIVATE mini_http)
+
 add_executable(test_path_root tests/path_root_test.cpp)
 target_link_libraries(test_path_root PRIVATE mini_http)
 
@@ -66,6 +70,7 @@ add_test(NAME connection COMMAND test_connection)
 add_test(NAME path_root COMMAND test_path_root)
 add_test(NAME path_resolve COMMAND test_path_resolve)
 add_test(NAME logger COMMAND test_logger)
+add_test(NAME config COMMAND test_config)
 set_tests_properties(http_handler path_resolve PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
 )
@@ -93,6 +98,9 @@ target_compile_options(test_connection
     PRIVATE -Wall -Wextra -Wpedantic)
 
 target_compile_options(test_logger
+    PRIVATE -Wall -Wextra -Wpedantic)
+
+target_compile_options(test_config
     PRIVATE -Wall -Wextra -Wpedantic)
 
 

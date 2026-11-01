@@ -18,6 +18,7 @@
 #include <sys/epoll.h>
 #include <cstdio>
 #include <string>
+#include <system_error>
 
 namespace mini_http {
 
@@ -141,8 +142,15 @@ bool send_all(int client_fd, std::string_view bytes) {
     return true;
 }
 
+Server::Server(const ServerConfig& config) :
+    acceptor_ (create_listen_socket(config.port)),
+    document_root_(std::filesystem::absolute(config.document_root)),
+    thread_pool_(config.thread_count) {
+}
+
+//  委托构造
 Server::Server(std::uint16_t port)
-    : acceptor_(create_listen_socket(port)) {
+    : Server(ServerConfig{port}) {
 }
 
 int Server::run() {
@@ -258,9 +266,52 @@ bool Server::handle_event(int fd, std::uint32_t events) {
     return true;
 }
 
+int run_server(const ServerConfig &config) {
+    try {
+        std::error_code ec;
+
+        const std::filesystem::path root =
+            std::filesystem::canonical(config.document_root, ec);
+
+        if(ec) {
+            log(LogLevel::Error,
+                std::string("invalid --root: ") + ec.message());
+            return -1;
+        }
+
+        const bool root_is_directory =
+            std::filesystem::is_directory(root, ec);
+
+        if(ec) {
+            log(LogLevel::Error,
+                std::string("failed to inspect --root: ") + ec.message());
+            return -1;
+        }
+
+        if(!root_is_directory) {
+            log(LogLevel::Error,
+                "--root must refer to a directory");
+            return -1;
+        }
+
+        ServerConfig validated_config = config;
+        validated_config.document_root = root;
+
+        Server server(validated_config);
+        return server.run();
+    } catch(const std::exception& error) {
+        log(LogLevel::Error,
+            std::string("server failed: ") + error.what());
+
+        return -1;
+    }
+}
+
+//  委托
 int run_server(std::uint16_t port) {
-    Server server(port);
-    return server.run();
+    ServerConfig config;
+    config.port = port;
+    return run_server(config);
 }
 
 bool Server::dispatch_request(
