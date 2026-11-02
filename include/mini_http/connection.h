@@ -83,6 +83,8 @@ public:
         std::chrono::steady_clock::time_point now,
         std::chrono::seconds idle_timeout) const noexcept;
 
+    ConnectionAction begin_shutdown() noexcept;
+
 private:
     int client_fd_{-1};
     std::uint64_t id_{0};

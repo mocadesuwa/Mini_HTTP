@@ -26,11 +26,13 @@ public:
 
     using EventHandler = std::function<bool(int, std::uint32_t)>;
     using Task = std::function<void()>;
+    using StopCondition = std::function<bool()>;
 
     int loop(
         const EventHandler& handler,
         int timeout_ms = -1,
-        const Task& on_tick = {});
+        const Task& on_tick = {},
+        const StopCondition& should_stop = {});
 
     bool wakeup();
 

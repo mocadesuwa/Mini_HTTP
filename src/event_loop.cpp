@@ -98,10 +98,14 @@ int EventLoop::wait(
 int EventLoop::loop(
     const EventHandler& handler,
     int timeout_ms,
-    const Task& on_tick) {
+    const Task& on_tick,
+    const StopCondition& should_stop) {
     epoll_event ready_events[4]{};
 
     while(true) {
+        if(should_stop && should_stop()) {
+            return 0;
+        }
         int ready_count = wait(ready_events, 4, timeout_ms);
 
         if(ready_count == -1) {

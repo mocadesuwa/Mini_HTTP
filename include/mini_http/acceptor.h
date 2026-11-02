@@ -13,6 +13,8 @@ public:
     int fd();
     int accept_one();
 
+    void stop() noexcept;
+
 private:
     int listen_fd_{-1};
 };

@@ -267,4 +267,14 @@ bool Connection::idle_timed_out(
     return time_diff >= idle_timeout;
 }
 
+ConnectionAction Connection::begin_shutdown() noexcept {
+    keep_alive_ = false;
+
+    if(processing_ || has_response()) {
+        return ConnectionAction::Keep;
+    }
+
+    return ConnectionAction::Close;
+}
+
 } // namespace

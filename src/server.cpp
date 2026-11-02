@@ -143,6 +143,7 @@ bool send_all(int client_fd, std::string_view bytes) {
 }
 
 Server::Server(const ServerConfig& config) :
+    shutdown_signal_(),
     acceptor_ (create_listen_socket(config.port)),
     document_root_(std::filesystem::absolute(config.document_root)),
     idle_timeout_(config.idle_timeout),
@@ -181,6 +182,15 @@ int Server::run() {
         return -1;
     }
 
+    if(!event_loop_.add_fd(shutdown_signal_.fd(), EPOLLIN)) {
+        const int error_code = errno;
+
+        log(LogLevel::Error,
+            std::string("epoll_ctl ADD signalfd failed: ") +
+            std::strerror(error_code));
+        return -1;
+    }
+
     log(LogLevel::Info, "server started");
 
     return event_loop_.loop(
@@ -189,7 +199,10 @@ int Server::run() {
         },
         1000,
         [this] {
-            close_idle_connections(idle_timeout_);
+            on_tick();
+        },
+        [this] {
+            return stopping_ && connections_.empty();
         }
     );
 }
@@ -203,6 +216,20 @@ bool Server::handle_event(int fd, std::uint32_t events) {
     if((events & EPOLLERR) != 0) {
         log(LogLevel::Error,
             std::string("EPOLLERR fd=") + std::to_string(fd));
+    }
+
+    if(fd == shutdown_signal_.fd()) {
+        bool received = false;
+
+        if(!shutdown_signal_.consume(received)) {
+            return false;
+        }
+
+        if(received) {
+            begin_shutdown();
+        }
+
+        return true;
     }
 
     if(fd == acceptor_.fd()) {
@@ -322,6 +349,9 @@ int run_server(std::uint16_t port) {
 
 bool Server::dispatch_request(
     int client_fd, std::uint64_t id, HttpRequest request) {
+    if(stopping_) {
+        return false;
+    }
 
     if(!event_loop_.modify_fd(client_fd, 0)) {
         const int error_code = errno;
@@ -359,7 +389,7 @@ bool Server::dispatch_request(
 
                     if(!succeeded ||
                         !it->second.start_response(
-                            event_loop_, std::move(bytes), keep_alive)) {
+                            event_loop_, std::move(bytes), keep_alive && !stopping_)) {
                         close_connection(client_fd);
                     }
                 }
@@ -407,6 +437,73 @@ void Server::close_idle_connections(std::chrono::seconds idle_timed_out) {
             close_connection(client_fd);
         }
     }
+}
+
+void Server::begin_shutdown() {
+    if(stopping_) {
+        return;
+    }
+
+    stopping_ = true;
+
+    shutdown_deadline_ =
+        std::chrono::steady_clock::now() + std::chrono::seconds{5};
+
+    log(LogLevel::Info, "server shutdown started");
+
+    const int listen_fd = acceptor_.fd();
+
+    if(listen_fd >= 0) {
+        if(!event_loop_.remove_fd(listen_fd)) {
+            const int error_code = errno;
+
+            log(LogLevel::Error,
+                std::string("epoll_ctl DEL listen socket failed: ") +
+                std::strerror(error_code));
+        }
+    }
+
+    acceptor_.stop();
+
+    auto it = connections_.begin();
+
+    while(it != connections_.end()) {
+        const int client_fd = it->first;
+        const ConnectionAction action = it->second.begin_shutdown();
+
+        ++it;
+
+        if(action == ConnectionAction::Close) {
+            close_connection(client_fd);
+        }
+    }
+}
+
+void Server::on_tick() {
+    if(!stopping_) {
+        close_idle_connections(idle_timeout_);
+        return;
+    }
+
+    if(connections_.empty()) {
+        return;
+    }
+
+    if(std::chrono::steady_clock::now() < shutdown_deadline_) {
+        return;
+    }
+
+    log(LogLevel::Warning,
+        "shutdown deadline reached; closing remaining connections");
+
+    auto it = connections_.begin();
+    while(it != connections_.end()) {
+        const int client_fd = it->first;
+
+        ++it;
+        close_connection(client_fd);
+    }
+
 }
 
 } // namespace

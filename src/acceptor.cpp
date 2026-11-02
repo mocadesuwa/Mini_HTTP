@@ -10,9 +10,7 @@ Acceptor::Acceptor(int listen_fd) noexcept
 }
 
 Acceptor::~Acceptor() {
-    if(listen_fd_ >= 0) {
-        close(listen_fd_);
-    }
+    stop();
 }
 
 int Acceptor::fd() {
@@ -21,6 +19,15 @@ int Acceptor::fd() {
 
 int Acceptor::accept_one() {
     return accept(listen_fd_, nullptr, nullptr);
+}
+
+void Acceptor::stop() noexcept {
+    if(listen_fd_ < 0) {
+        return;
+    }
+
+    close(listen_fd_);
+    listen_fd_ = -1;
 }
 
 } // namespace

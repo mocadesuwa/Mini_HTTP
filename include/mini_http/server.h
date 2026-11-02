@@ -5,6 +5,8 @@
 #include "mini_http/event_loop.h"
 #include "mini_http/thread_pool.h"
 #include "mini_http/config.h"
+#include "mini_http/shutdown_signal.h"
+
 
 #include <cstdint>
 #include <string_view>
@@ -34,6 +36,7 @@ public:
 private:
     bool handle_event(int fd, std::uint32_t events);
 
+    ShutdownSignal shutdown_signal_;
     Acceptor acceptor_;
     EventLoop event_loop_;
     std::unordered_map<int, Connection> connections_;
@@ -51,6 +54,13 @@ private:
     const std::filesystem::path document_root_;
 
     const std::chrono::seconds idle_timeout_;
+
+    void begin_shutdown();
+
+    void on_tick();
+
+    bool stopping_{false};
+    std::chrono::steady_clock::time_point shutdown_deadline_{};
 
     ThreadPool thread_pool_;
 };

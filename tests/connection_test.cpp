@@ -4,9 +4,13 @@
 
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <fcntl.h>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <cstddef>
+#include <cstdint>
 #include <chrono>
 #include <cerrno>
 
@@ -424,6 +428,142 @@ void test_io_activity() {
         "blocked write", "stalled connection was not eligible for timeout");
 }
 
+void test_shutdown_state() {
+    struct ShutdownCase {
+        const char* name;
+        std::string request_bytes;
+        bool prepare_processing;
+        bool prepare_response;
+        std::size_t sent_prefix;
+        mini_http::ConnectionAction expected_action;
+    };
+
+    const std::string complete_request =
+        "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    const std::string next_request =
+        "GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    const std::string response_bytes = "hello";
+
+    const ShutdownCase cases[] = {
+        {"shutdown idle", "", false, false, 0,
+            mini_http::ConnectionAction::Close},
+        {"shutdown partial request", "GET / HTTP/1.1\r\nHost: local",
+            false, false, 0, mini_http::ConnectionAction::Close},
+        {"shutdown processing", complete_request, true, false, 0,
+            mini_http::ConnectionAction::Keep},
+        {"shutdown pending response", next_request, false, true, 0,
+            mini_http::ConnectionAction::Keep},
+        {"shutdown partially sent response", next_request, false, true, 2,
+            mini_http::ConnectionAction::Keep}
+    };
+
+    for(const ShutdownCase& test : cases) {
+        int sockets[2]{-1, -1};
+        expect(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0,
+                test.name, "socketpair failed");
+
+        Connection receiver(sockets[0], 1);
+        Connection peer(sockets[1], 2);
+        EventLoop event_loop;
+
+        expect(event_loop.fd() != -1,
+                test.name, "event loop initialization failed");
+        expect(event_loop.add_fd(receiver.fd(), EPOLLIN),
+                test.name, "failed to register receiver");
+
+        receiver.state().request_bytes = test.request_bytes;
+        HttpRequest request;
+
+        if(test.prepare_processing) {
+            const auto action = receiver.handle_event(event_loop, request);
+            expect(action == mini_http::ConnectionAction::RequestReady,
+                    test.name, "request did not become ready");
+            expect(receiver.processing(),
+                    test.name, "processing flag was not set");
+        }
+
+        if(test.prepare_response) {
+            // 先建立可复用响应，再检查begin_shutdown会禁止后续复用。
+            expect(receiver.start_response(event_loop, response_bytes, true),
+                    test.name, "failed to start response");
+
+            if(test.sent_prefix != 0) {
+                const ssize_t sent = send(
+                    receiver.fd(), response_bytes.data(), test.sent_prefix,
+                    MSG_DONTWAIT | MSG_NOSIGNAL);
+                expect(sent == static_cast<ssize_t>(test.sent_prefix),
+                        test.name, "failed to send response prefix");
+
+                // 对应前面真实发出的前缀，不把未发送数据伪造成已发送。
+                receiver.state().sent_bytes = test.sent_prefix;
+            }
+        }
+
+        const ConnectionState before = receiver.state();
+        const bool was_processing = receiver.processing();
+        const int original_fd = receiver.fd();
+        const std::uint64_t original_id = receiver.id();
+        const auto shutdown_action = receiver.begin_shutdown();
+
+        expect(shutdown_action == test.expected_action,
+                test.name, "shutdown action mismatch");
+        expect(receiver.begin_shutdown() == test.expected_action,
+                test.name, "repeated shutdown changed the action");
+        expect(receiver.fd() == original_fd && receiver.id() == original_id,
+                test.name, "shutdown changed connection identity");
+        expect(fcntl(receiver.fd(), F_GETFD) != -1,
+                test.name, "shutdown closed a descriptor owned by Server");
+        expect(receiver.processing() == was_processing,
+                test.name, "shutdown changed processing state");
+        expect(receiver.state().request_bytes == before.request_bytes,
+                test.name, "shutdown changed buffered request bytes");
+        expect(receiver.state().response_bytes == before.response_bytes,
+                test.name, "shutdown changed serialized response bytes");
+        expect(receiver.state().sent_bytes == before.sent_bytes,
+                test.name, "shutdown reset send progress");
+        expect(receiver.state().io_idle_since == before.io_idle_since,
+                test.name, "shutdown changed the IO activity time");
+
+        if(test.prepare_processing) {
+            expect(receiver.handle_event(event_loop, request) ==
+                    mini_http::ConnectionAction::Keep,
+                    test.name, "processing work was not preserved");
+        }
+
+        if(test.prepare_response) {
+            const auto completed_action =
+                receiver.handle_event(event_loop, request);
+
+            expect(completed_action == mini_http::ConnectionAction::Close,
+                    test.name, "completed response did not close");
+            expect(receiver.state().sent_bytes == response_bytes.size(),
+                    test.name, "response was not completely sent");
+            expect(receiver.state().request_bytes == next_request,
+                    test.name, "shutdown consumed the next buffered request");
+            expect(!receiver.processing(),
+                    test.name, "shutdown started processing another request");
+
+            std::string received_bytes;
+            while(received_bytes.size() < response_bytes.size()) {
+                char buffer[16]{};
+                const ssize_t received = recv(
+                    peer.fd(), buffer, sizeof(buffer), MSG_DONTWAIT);
+
+                if(received < 0 && errno == EINTR) {
+                    continue;
+                }
+
+                expect(received > 0,
+                        test.name, "peer did not receive the complete response");
+                received_bytes.append(buffer, static_cast<std::size_t>(received));
+            }
+
+            expect(received_bytes == response_bytes,
+                    test.name, "response bytes were lost, duplicated or changed");
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -437,7 +577,8 @@ int main() {
         {"fragmented requests", test_fragmented_requests},
         {"bad buffered requests", test_bad_buffered_request},
         {"idle timeout", test_idle_timeout},
-        {"IO activity", test_io_activity}
+        {"IO activity", test_io_activity},
+        {"shutdown state", test_shutdown_state}
     };
 
     for(const TestGroup& group : groups) {
@@ -450,7 +591,7 @@ int main() {
         }
     }
 
-    std::cout << "All 5 connection test groups passed\n";
+    std::cout << "All 6 connection test groups passed\n";
 
     return 0;
 }

@@ -22,7 +22,8 @@ add_library(mini_http
             src/connection.cpp
             src/thread_pool.cpp
             src/logger.cpp
-            src/config.cpp)
+            src/config.cpp
+            src/shutdown_signal.cpp)
 
 target_link_libraries(mini_http PUBLIC Threads::Threads)
 
@@ -49,6 +50,12 @@ target_link_libraries(test_http_request PRIVATE mini_http)
 add_executable(test_connection tests/connection_test.cpp)
 target_link_libraries(test_connection PRIVATE mini_http)
 
+add_executable(test_event_loop tests/event_loop_test.cpp)
+target_link_libraries(test_event_loop PRIVATE mini_http)
+
+add_executable(test_shutdown_signal tests/shutdown_signal_test.cpp)
+target_link_libraries(test_shutdown_signal PRIVATE mini_http)
+
 add_executable(test_logger tests/logger_test.cpp)
 target_link_libraries(test_logger PRIVATE mini_http)
 
@@ -67,8 +74,12 @@ add_test(NAME http_response COMMAND test_http_response)
 add_test(NAME http_handler COMMAND test_http_handler)
 add_test(NAME http_request COMMAND test_http_request)
 add_test(NAME connection COMMAND test_connection)
+add_test(NAME event_loop COMMAND test_event_loop)
+set_tests_properties(event_loop PROPERTIES TIMEOUT 5)
 add_test(NAME path_root COMMAND test_path_root)
 add_test(NAME path_resolve COMMAND test_path_resolve)
+add_test(NAME shutdown_signal COMMAND test_shutdown_signal)
+set_tests_properties(shutdown_signal PROPERTIES TIMEOUT 5)
 add_test(NAME logger COMMAND test_logger)
 add_test(NAME config COMMAND test_config)
 set_tests_properties(http_handler path_resolve PROPERTIES
@@ -95,6 +106,12 @@ target_compile_options(test_http_request
     PRIVATE -Wall -Wextra -Wpedantic)
 
 target_compile_options(test_connection
+    PRIVATE -Wall -Wextra -Wpedantic)
+
+target_compile_options(test_event_loop
+    PRIVATE -Wall -Wextra -Wpedantic)
+
+target_compile_options(test_shutdown_signal
     PRIVATE -Wall -Wextra -Wpedantic)
 
 target_compile_options(test_logger
