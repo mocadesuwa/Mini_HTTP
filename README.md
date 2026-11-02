@@ -1,117 +1,109 @@
 # Mini_HTTP
 
 ## 项目简介
-该 Mini_HTTP 是一个基于 C++17 和 Linux Socket API 的 HTTP 服务器学习项目
-在 WSL / Ubuntu 的环境下开发
 
-项目从阻塞 Socket 开始，逐步实现 HTTP 请求解析、响应生成，
-再使用非阻塞读写和 epoll，让一个线程同时管理多个客户端连接。
+Mini_HTTP 是一个基于 C++17 和 Linux Socket API 的 HTTP 服务器学习项目，
+在 WSL / Ubuntu 环境下开发。
 
-当前已完成 Phase 1～Phase 6。正式服务器采用单线程、LT 模式的
-epoll 事件循环，每个连接处理一次请求，发送响应后关闭连接。将
-server中的功能进行了职责划分，使成为一个完整的单线程Reactor。
+项目从阻塞 Socket 开始，逐步实现 HTTP 解析、非阻塞读写、Reactor、
+线程池、静态文件服务和 HTTP/1.1 Keep-Alive，目前已实现 Phase 1～Phase 7 的功能。
+
+服务器采用单 IO 线程的 LT epoll 事件循环，配合 ThreadPool 处理业务。
+IO 线程负责 Socket 收发和连接生命周期，worker 负责文件读取与响应生成，
+通过任务队列和 eventfd 将结果交回 IO 线程。同一连接内的请求串行处理。
 
 ## 当前功能与进度
 
 ### Phase 1：最小 HTTP 服务器
 
 - 使用 socket、bind、listen、accept 建立 TCP 服务。
-- 接收客户端请求，发送固定的 HTTP 200 响应。
-- 完成一次请求、响应和关闭连接的完整流程。
+- 完成请求接收、固定响应发送及连接关闭。
 
 ### Phase 2：HTTP 请求解析与响应生成
 
-- 使用 HttpRequest 保存解析后的请求信息。
-- 使用 HttpParser 解析请求行、Headers 和 Content-Length 指定的定长 Body。
-- 区分请求完整、需要更多数据和请求非法三种情况。
-- 使用 HttpResponse 生成状态行、响应头和响应正文。
-- 接入请求处理逻辑，支持 200、400、404、405 响应。
+- 解析请求行、Headers 和 Content-Length 指定的定长 Body。
+- 区分完整请求、分段请求和非法请求。
+- 生成 HTTP 状态行、响应头及正文，支持 200、400、404、405 等响应。
 
 ### Phase 3：非阻塞 Socket 与 epoll
 
-- 使用 epoll_create1、epoll_ctl、epoll_wait 管理连接事件。
-- 为监听 Socket 设置 O_NONBLOCK。
-- 客户端 recv/send 使用 MSG_DONTWAIT，避免等待数据或发送空间时阻塞线程。
-- 使用 unordered_map 保存每个客户端的连接状态。
-- 在 ConnectionState 中保存请求缓冲区、响应缓冲区和已发送字节数。
-- 请求分段到达时保留已有数据，等待后续可读事件。
-- 响应准备好后切换到 EPOLLOUT，等待可写事件再发送。
-- 发生部分发送时保存进度，后续从未发送的位置继续。
-- 遇到 EINTR 重试，遇到 EAGAIN/EWOULDBLOCK 保留连接并返回事件循环。
-- 连接结束或发生 I/O 错误后，移除 epoll 监听并释放连接。
-- 记录 EPOLLHUP、EPOLLERR 事件，并根据实际收发结果处理连接。
+- 使用 LT epoll 管理多个客户端连接，收发操作采用非阻塞方式。
+- 保存请求缓冲区、响应缓冲区及发送进度，支持分段接收与部分发送。
+- 处理 EINTR、EAGAIN/EWOULDBLOCK 和连接异常，及时释放资源。
 
-### Phase 4：Reactor 与 Thread_pool
+### Phase 4：Reactor 与 ThreadPool
 
-- 拆分服务器职责：用 Server、 Event_loop、 Acceptor、 Connection分别承担服务器协调、就绪事件分发、接受连接和连续读写职责
-- 实现 ThreadPool，使用任务队列、互斥锁和条件变量调度工作线程
-- IO 线程负责客户端 Socket 收发、epoll 事件管理和连接生命周期;
-  worker 负责完整请求的 handle_request 调用以及响应序列化。
-- 使用移动捕获传递请求和响应数据， worker 不直接操作 Connection。
-- 通过 EventLoop::post、线程安全任务队列和 eventfd 唤醒机制。
-  将业务结果交回 IO 线程处理。
-- IO 回调使用 fd 和连接 id 核对结果归属， 再保存响应并关注 EPOLLOUT。
-- 连接关闭后允许在途任务完成，回调发现连接失效时丢弃结果。
-- 使用 RAII 明确文件描述符所有权; 线程池析构时等待工作线程退出。
+- 用 Server、EventLoop、Acceptor、Connection 拆分协调、事件分发、监听和连接职责。
+- 使用任务队列、互斥锁和条件变量调度 worker，通过 EventLoop::post 回传结果。
+- 使用 fd/id 校验迟到结果的归属，通过 RAII 管理文件描述符和线程池生命周期。
 
 ### Phase 5：静态文件服务
 
-- 以启动工作目录下的 www 为静态文件根目录。
-- GET / 映射到 index.html，支持访问嵌套目录中的文件。
-- 支持 HTML、TXT、CSS、JavaScript 类型；
-  未知类型使用 application/octet-stream。
-- 先分离查询参数，再对路径进行一次百分号解码；
-  规范化路径并检查其是否位于根目录内。
-- 支持空文件和含 NUL 字节的二进制文件，
-  Content-Length 按正文字节数生成。
-- 支持非法路径、越界、文件不存在、权限不足、
-  非 GET 方法和文件系统错误的对应响应。
-- worker 负责文件读取与响应生成，
-  IO 线程负责 Socket 收发，响应发送完毕后关闭连接。
+- 默认以 www 为静态文件根目录，GET / 映射到 index.html。
+- 支持嵌套路径、查询参数分离、百分号解码和路径边界检查。
+- 支持常见文件类型、空文件和二进制正文，按实际字节数生成 Content-Length。
 
-### Phase 6： HTTP/1.1 Keep-Alive
+### Phase 6：HTTP/1.1 Keep-Alive
 
-- 支持同一个 TCP 连接按顺序完成多轮请求与响应。
-- HTTP/1.1 默认保持连接；根据 Connection 头决定复用或关闭，
-  多个字段或逗号分隔值中出现独立的 close 标记时，优先关闭。
-- 响应发送完毕后，按连接策略关闭连接，
-  或重置本轮响应状态并继续处理下一条请求。
-- 每次只消费当前请求的字节，保留缓冲区中后续请求的数据，
-  支持连续请求及分段到达的请求。
-- 已缓冲的完整请求可直接继续处理，无需等待新的可读事件。
-- 单个连接内串行处理请求，保持响应顺序；
-  IO 线程与 worker 的职责划分保持不变。
-- Parser 判定请求非法时，返回 400 并关闭连接。
+- 支持同一 TCP 连接上的多轮请求，按 Connection 头决定复用或关闭。
+- 保留后续请求的缓冲数据，按顺序处理连续请求和分段请求。
+- 非法请求返回 400 并关闭连接。
+
+### Phase 7：配置、日志、超时与优雅关闭
+
+- 支持端口、静态文件根目录、worker 数量和 IO 空闲超时配置。
+- 提供 INFO、WARN、ERROR 日志，整行输出到标准错误。
+- 根据实际收发进展回收 IO 空闲连接，worker 处理期间不因 IO 空闲而回收。
+- 通过 signalfd 响应 SIGINT/SIGTERM，停止接收新请求并为当前工作提供 5 秒网络收尾窗口。
 
 ## 构建与运行
 
-在 WSL / Ubuntu 的项目根目录执行:
+需要支持 C++17 的编译器、CMake 3.20 及以上版本，以及 Linux / WSL 环境。
+在项目根目录执行：
 
 ```bash
-cmake -S . -B build
-cmake --build build
+set -o pipefail
+cmake -S . -B build 2>&1 | tee build.log &&
+cmake --build build -j2 2>&1 | tee -a build.log
+```
+
+构建失败时先检查 build.log。构建成功后启动服务器：
+
+```bash
 ./build/mini_http_server
 ```
 
-服务器默认监听 8081 端口。需要另开一个终端进行访问:
+默认监听 `127.0.0.1:8081`，另开一个终端访问：
+
 ```bash
 curl --noproxy '*' -i http://127.0.0.1:8081/
 ```
 
-## 验证情况
-
-- 基础 HTTP 阶段已经验证 200、400、404、405 响应、
-  Content-Length、正文以及响应后关闭连接
-- 已验证请求分段到达时其他连接仍能正常响应;
-  通过独立发送实验验证部分发送、 WouldBlock 和 EPOLLOUT 续传。
-- post 实验确认业务由 worker 执行，回调由 IO 线程执行。
-- 线程池接入之后进行了正常请求、处理中客户端断开、迟到结果丢弃以及后续请求处理实验。
-- Phase 5 已验证正常静态文件、错误路径、空文件和二进制传输、
-  Content-Length、读取权限不足及恢复，以及响应后主动关闭连接。
-
-
-项目包含 `http_parser`、`http_response`、`http_handler`、`path_root`、`path_resolve`、`http_request`、 `connection` 五组自动化测试:
+自定义启动参数：
 
 ```bash
-ctest --test-dir build --output-on-failure
+./build/mini_http_server --port 8082 --root ./www --threads 4 --idle-timeout 15
 ```
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--port PORT` | `8081` | 监听端口，范围 1～65535 |
+| `--root PATH` | `www` | 静态文件根目录，相对路径基于启动工作目录 |
+| `--threads N` | `2` | worker 线程数，正整数 |
+| `--idle-timeout SECONDS` | `30` | IO 空闲超时秒数，正整数 |
+| `--help` | — | 显示帮助 |
+
+按 Ctrl+C 或向服务器进程发送 SIGTERM 开始优雅关闭。
+5 秒为网络收尾窗口，进程退出还需要等待 worker 结束。
+
+## 测试
+
+项目使用 CTest 管理 11 项自动测试，覆盖 HTTP 解析与响应、Keep-Alive、
+静态文件路径、连接状态、事件循环、信号资源、日志和启动配置。
+
+```bash
+set -o pipefail
+ctest --test-dir build --output-on-failure 2>&1 | tee -a build.log
+```
+
+测试失败时先检查 build.log。`tests/demos/` 中保留独立示例，不注册到 CTest。
