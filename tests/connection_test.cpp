@@ -1,6 +1,6 @@
-#include "mini_http/connection.h"
-#include "mini_http/http_request.h"
-#include "mini_http/event_loop.h"
+#include "mini_http/reactor/connection.h"
+#include "mini_http/http/http_request.h"
+#include "mini_http/reactor/event_loop.h"
 
 #include <sys/epoll.h>
 #include <sys/socket.h>

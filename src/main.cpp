@@ -1,6 +1,6 @@
-#include "mini_http/server.h"
-#include "mini_http/logger.h"
-#include "mini_http/config.h"
+#include "mini_http/server/server.h"
+#include "mini_http/runtime/logger.h"
+#include "mini_http/server/config.h"
 
 #include <iostream>
 #include <string>

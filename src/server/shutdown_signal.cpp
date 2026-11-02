@@ -1,5 +1,5 @@
-#include "mini_http/shutdown_signal.h"
-#include "mini_http/logger.h"
+#include "mini_http/server/shutdown_signal.h"
+#include "mini_http/runtime/logger.h"
 
 #include <pthread.h>
 #include <sys/signalfd.h>

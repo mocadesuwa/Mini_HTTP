@@ -1,6 +1,6 @@
 #pragma once
 #include <string_view>
-#include "mini_http/http_request.h"
+#include "mini_http/http/http_request.h"
 
 namespace mini_http {
 

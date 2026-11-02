@@ -1,4 +1,4 @@
-#include "mini_http/server.h"
+#include "mini_http/server/server.h"
 
 #include <sys/socket.h>
 #include <sys/epoll.h>

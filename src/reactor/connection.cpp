@@ -1,9 +1,9 @@
-#include "mini_http/connection.h"
-#include "mini_http/http_parser.h"
-#include "mini_http/event_loop.h"
-#include "mini_http/http_handler.h"
-#include "mini_http/http_response.h"
-#include "mini_http/logger.h"
+#include "mini_http/reactor/connection.h"
+#include "mini_http/http/http_parser.h"
+#include "mini_http/reactor/event_loop.h"
+#include "mini_http/static_file/http_handler.h"
+#include "mini_http/http/http_response.h"
+#include "mini_http/runtime/logger.h"
 
 #include <unistd.h>
 #include <sys/socket.h>

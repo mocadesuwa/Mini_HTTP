@@ -1,4 +1,4 @@
-#include "mini_http/shutdown_signal.h"
+#include "mini_http/server/shutdown_signal.h"
 
 #include <pthread.h>
 #include <signal.h>

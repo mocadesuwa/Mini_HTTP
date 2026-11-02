@@ -12,6 +12,38 @@ Mini_HTTP 是一个基于 C++17 和 Linux Socket API 的 HTTP 服务器学习项
 IO 线程负责 Socket 收发和连接生命周期，worker 负责文件读取与响应生成，
 通过任务队列和 eventfd 将结果交回 IO 线程。同一连接内的请求串行处理。
 
+## 目录结构
+
+头文件与源文件按相同职责分组，分别位于 `include/mini_http/` 和 `src/`：
+
+| 分组 | 职责 |
+| --- | --- |
+| `server/` | 服务器协调、启动配置和关闭信号 |
+| `reactor/` | 事件循环、监听和连接管理 |
+| `http/` | HTTP 请求、解析及响应序列化 |
+| `static_file/` | 静态文件处理和路径检查 |
+| `runtime/` | 线程池和日志 |
+
+```text
+mini_http/
+├── CMakeLists.txt          # 项目配置和子目录入口
+├── include/mini_http/      # 按上述分组组织的头文件
+├── src/
+│   ├── CMakeLists.txt      # 库及服务器目标
+│   ├── main.cpp           # 程序入口
+│   ├── server/
+│   ├── reactor/
+│   ├── http/
+│   ├── static_file/
+│   └── runtime/
+├── tests/
+│   ├── CMakeLists.txt      # 自动测试和CTest注册
+│   ├── *_test.cpp
+│   └── demos/             # 独立示例及其CMake配置
+├── www/                   # 默认静态文件目录
+└── README.md
+```
+
 ## 当前功能与进度
 
 ### Phase 1：最小 HTTP 服务器

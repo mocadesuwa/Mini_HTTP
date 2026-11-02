@@ -1,4 +1,4 @@
-#include "mini_http/config.h"
+#include "mini_http/server/config.h"
 
 #include <charconv>
 #include <string_view>

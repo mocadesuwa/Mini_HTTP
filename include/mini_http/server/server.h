@@ -1,11 +1,11 @@
 #pragma once
 
-#include "mini_http/connection.h"
-#include "mini_http/acceptor.h"
-#include "mini_http/event_loop.h"
-#include "mini_http/thread_pool.h"
-#include "mini_http/config.h"
-#include "mini_http/shutdown_signal.h"
+#include "mini_http/reactor/connection.h"
+#include "mini_http/reactor/acceptor.h"
+#include "mini_http/reactor/event_loop.h"
+#include "mini_http/runtime/thread_pool.h"
+#include "mini_http/server/config.h"
+#include "mini_http/server/shutdown_signal.h"
 
 
 #include <cstdint>
